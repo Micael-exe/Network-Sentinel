@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "network-sentinel"
+version = "1.0.0"
+description = "Monitoramento de rede doméstica com Nmap e Wireshark: inventário, histórico, alertas e relatórios."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+
+[project.scripts]
+netsentinel = "netsentinel.cli:main"
+
+[tool.setuptools]
+packages = ["netsentinel"]

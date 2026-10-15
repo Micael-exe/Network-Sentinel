@@ -1,0 +1,16 @@
+[Unit]
+Description=Network Sentinel - monitoramento da rede domestica
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/network-sentinel
+StateDirectory=network-sentinel
+Environment=NETSENTINEL_DB=/var/lib/network-sentinel/sentinel.db
+ExecStart=/usr/bin/python3 -m netsentinel watch --interval 300 --ports
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

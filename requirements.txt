@@ -1,0 +1,2 @@
+# Network Sentinel usa apenas a biblioteca padrão do Python 3.9+.
+# Dependências de sistema (Kali): nmap e tshark  ->  scripts/setup_kali.sh
