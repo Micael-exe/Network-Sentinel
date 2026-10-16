@@ -1,12 +1,14 @@
 """Interface de linha de comando do Network Sentinel."""
 import argparse
+import getpass
 import os
 import sys
 import time
 from datetime import datetime
 
-from . import __version__, analyzer, capture, report, scanner, server
-from .db import Database, ensure_dir, normalize_mac, now
+from . import __version__, analyzer, capture, notify, report, scanner, server
+from .db import Database, _chown_to_sudo_user, ensure_dir, normalize_mac, now
+from .notify import TelegramError
 from .scanner import ScanError
 
 COLORS = {"critical": "\033[1;97;41m", "high": "\033[1;31m", "medium": "\033[33m",
@@ -33,6 +35,43 @@ def table(rows, headers):
 
 
 # ---------------------------------------------------------------- comandos
+def _require_telegram():
+    cfg = notify.load_config()
+    if not cfg:
+        raise ScanError("Telegram não configurado. Rode: python3 -m netsentinel telegram setup")
+    return cfg
+
+
+def _notify(alerts, level):
+    """Envia alertas novos; nunca derruba o monitoramento se o Telegram falhar."""
+    try:
+        n = notify.notify_alerts(_require_telegram(), alerts, level)
+        if n:
+            print(f"[+] Telegram: {n} alerta(s) enviado(s).")
+    except (TelegramError, ScanError) as exc:
+        print(f"[!] Telegram: {exc}")
+
+
+def _write_report(db, fmt="html"):
+    out = os.path.join("reports", f"report_{datetime.now():%Y%m%d_%H%M%S}.{fmt}")
+    ensure_dir("reports")
+    with open(out, "w", encoding="utf-8") as f:
+        f.write(report.render(db, fmt))
+    _chown_to_sudo_user(out)
+    return out
+
+
+def _send_report(db, path=None):
+    cfg = _require_telegram()
+    data = report.collect(db)
+    path = path or _write_report(db, "html")
+    caption = (f"🛡️ Network Sentinel — {len(data['devices'])} dispositivos, "
+               f"{len(data['alerts'])} alertas abertos "
+               f"({data['sev']['critical'] + data['sev']['high']} críticos/altos)")
+    notify.Telegram(*cfg).send_document(path, caption)
+    print("[+] Telegram: relatório enviado.")
+
+
 def run_scan(db: Database, args) -> dict:
     if os.geteuid() != 0:
         raise ScanError("A varredura precisa de root para ler MACs via ARP. "
@@ -56,10 +95,14 @@ def run_scan(db: Database, args) -> dict:
     if args.learn:
         print("[+] Modo --learn: todos os dispositivos atuais foram marcados como confiáveis.")
     print_alerts(result["alerts"])
+    if args.notify:
+        _notify(result["alerts"], args.notify_level)
     return result
 
 
 def cmd_scan(db, args):
+    if args.notify:
+        _require_telegram()
     run_scan(db, args)
 
 
@@ -78,6 +121,9 @@ def cmd_serve(db, args):
 
 
 def cmd_watch(db, args):
+    if args.notify or args.report_every:
+        _require_telegram()
+    next_report = time.time() + args.report_every * 3600 if args.report_every else None
     if args.serve:
         _start_server(args)
     print(f"[*] Monitorando a cada {args.interval}s. Ctrl+C para parar.")
@@ -88,6 +134,12 @@ def cmd_watch(db, args):
                 run_scan(db, args)
             except (ScanError, OSError) as exc:
                 print(f"[!] {exc}")
+            if next_report and time.time() >= next_report:
+                try:
+                    _send_report(db)
+                except (TelegramError, ScanError, OSError) as exc:
+                    print(f"[!] Telegram: {exc}")
+                next_report += args.report_every * 3600
             time.sleep(args.interval)
     except KeyboardInterrupt:
         print("\n[*] Encerrado.")
@@ -173,13 +225,52 @@ def cmd_capture(db, args):
         print("[+] Nenhuma anomalia no tráfego capturado.")
 
 
+def cmd_telegram(_db, args):
+    if args.action == "test":
+        notify.Telegram(*_require_telegram()).send_message(
+            "✅ <b>Network Sentinel</b> conectado ao Telegram.")
+        print("[+] Mensagem de teste enviada. Confira o seu Telegram.")
+        return
+    print("== Configuração do Telegram ==")
+    print("1) No Telegram, converse com @BotFather, envie /newbot e copie o TOKEN.\n")
+    token = getpass.getpass("Cole o token (não aparece ao digitar): ").strip()
+    if not token:
+        raise ValueError("Token vazio.")
+    tg = notify.Telegram(token, "")
+    me = tg.get_me()
+    print(f"[+] Bot encontrado: @{me.get('username')}\n")
+    input(f"2) Abra @{me.get('username')} no Telegram, toque em Iniciar e envie qualquer "
+          f"mensagem.\n   Depois aperte Enter aqui... ")
+    chats = tg.get_chat_ids()
+    if chats:
+        for i, (cid, name, kind) in enumerate(chats, 1):
+            print(f"   {i}) {name} ({kind}) - id {cid}")
+        pick = (input("Qual é você? [1]: ").strip() or "1")
+        if not pick.isdigit() or not 1 <= int(pick) <= len(chats):
+            raise ValueError("Opção inválida.")
+        chat_id = str(chats[int(pick) - 1][0])
+    else:
+        chat_id = input("Nenhuma mensagem encontrada. Digite o chat_id manualmente: ").strip()
+        if not chat_id:
+            raise ValueError("chat_id vazio.")
+    path = notify.save_config(token, chat_id)
+    _chown_to_sudo_user(path)
+    print(f"[+] Credenciais salvas em {path} (permissão 600, já ignorado pelo git).")
+    notify.Telegram(token, chat_id).send_message(
+        "✅ <b>Network Sentinel</b> configurado! Você receberá os alertas aqui.")
+    print("[+] Mensagem de teste enviada. Confira o seu Telegram.")
+
+
 def cmd_report(db, args):
     content = report.render(db, args.format)
     out = args.output or os.path.join("reports", f"report_{datetime.now():%Y%m%d_%H%M%S}.{args.format}")
     ensure_dir(os.path.dirname(os.path.abspath(out)))
     with open(out, "w", encoding="utf-8") as f:
         f.write(content)
+    _chown_to_sudo_user(out)
     print(f"[+] Relatório salvo em {out}")
+    if args.send:
+        _send_report(db, out)
 
 
 def cmd_demo(_db, args):
@@ -214,10 +305,15 @@ def build_parser():
         sp.add_argument("--top-ports", type=int, default=100)
         sp.add_argument("--learn", action="store_true", help="marcar todos como confiáveis (baseline)")
         sp.add_argument("--absent-days", type=int, default=14)
+        sp.add_argument("--notify", action="store_true", help="envia alertas novos pelo Telegram")
+        sp.add_argument("--notify-level", choices=["critical", "high", "medium", "low"],
+                        default="high", help="severidade mínima a notificar (padrão: high)")
 
     s = sub.add_parser("scan", help="varre a rede e analisa mudanças"); scan_opts(s); s.set_defaults(fn=cmd_scan)
     w = sub.add_parser("watch", help="varredura contínua"); scan_opts(w)
     w.add_argument("--interval", type=int, default=300)
+    w.add_argument("--report-every", type=float, default=0, metavar="HORAS",
+                   help="envia o relatório HTML pelo Telegram a cada N horas")
     w.add_argument("--serve", action="store_true", help="sobe o painel ao vivo junto com o monitoramento")
     w.set_defaults(fn=cmd_watch)
     for sp in (w,):
@@ -243,7 +339,11 @@ def build_parser():
     c.add_argument("--pcap", help="analisar arquivo .pcap salvo no Wireshark")
     c.add_argument("--max-mb", type=float, default=100.0); c.set_defaults(fn=cmd_capture)
     r = sub.add_parser("report", help="gera relatório"); r.add_argument("--format", choices=["html", "md"], default="html")
-    r.add_argument("-o", "--output"); r.set_defaults(fn=cmd_report)
+    r.add_argument("-o", "--output")
+    r.add_argument("--send", action="store_true", help="envia o relatório pelo Telegram")
+    r.set_defaults(fn=cmd_report)
+    g = sub.add_parser("telegram", help="configura/testa as notificações do Telegram")
+    g.add_argument("action", choices=["setup", "test"]); g.set_defaults(fn=cmd_telegram)
     d = sub.add_parser("demo", help="gera dados e relatório de demonstração (sem root)")
     d.add_argument("--demo-db", default="data/demo.db"); d.add_argument("--out-dir", default="reports")
     d.set_defaults(fn=cmd_demo)
@@ -253,9 +353,9 @@ def build_parser():
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
-        db = Database(args.db) if args.cmd != "demo" else None
+        db = Database(args.db) if args.cmd not in ("demo", "telegram") else None
         args.fn(db, args)
-    except (ScanError, ValueError) as exc:
+    except (ScanError, TelegramError, ValueError) as exc:
         print(f"[!] {exc}", file=sys.stderr)
         return 1
     return 0

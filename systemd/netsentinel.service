@@ -8,6 +8,8 @@ Type=simple
 WorkingDirectory=/opt/network-sentinel
 StateDirectory=network-sentinel
 Environment=NETSENTINEL_DB=/var/lib/network-sentinel/sentinel.db
+# Telegram: crie /opt/network-sentinel/.env (telegram setup) e acrescente --notify abaixo
+EnvironmentFile=-/opt/network-sentinel/.env
 ExecStart=/usr/bin/python3 -m netsentinel watch --interval 300 --ports
 Restart=on-failure
 RestartSec=30

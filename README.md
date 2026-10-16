@@ -82,6 +82,7 @@ history   histórico de um MAC
 capture   tráfego via tshark   (--iface, --duration, --pcap arquivo, --max-mb)
 report    gera relatório       (--format html|md, -o arquivo)
 serve     painel web ao vivo   (--port, --host, --refresh)
+telegram  setup | test         (notificações)
 demo      dados de demonstração
 ```
 
@@ -93,6 +94,23 @@ sudo python3 -m netsentinel watch --ports --serve    # escaneia e serve ao mesmo
 ```
 
 O relatório é gerado do banco a cada acesso e a página se atualiza a cada 10 s (`--refresh N`), sem perder a posição da rolagem. Também expõe `/report.md` e `/api.json`. Por padrão escuta só em `127.0.0.1`; use `--host 0.0.0.0` para abrir a outros aparelhos da rede (**sem senha**, só em rede doméstica confiável).
+
+### Notificações no Telegram
+
+```bash
+python3 -m netsentinel telegram setup      # assistente: token do @BotFather + descobre seu chat_id
+python3 -m netsentinel telegram test       # mensagem de teste
+
+sudo python3 -m netsentinel scan --notify                      # avisa alertas ALTO e CRÍTICO
+sudo python3 -m netsentinel watch --ports --serve --notify --report-every 24
+python3 -m netsentinel report --send       # gera o HTML e envia como anexo
+```
+
+- `--notify-level critical|high|medium|low` define a severidade mínima (padrão: `high`).
+- Os alertas de uma varredura vão agrupados em **uma** mensagem, e a deduplicação de 6 h evita repetição.
+- O token fica em `.env` (permissão 600, ignorado pelo git). **Nunca** publique esse arquivo; se vazar, use `/revoke` no @BotFather.
+- Se o Telegram estiver fora do ar, o monitoramento continua e só registra o erro.
+- Atenção à privacidade: mensagens de bot não têm criptografia de ponta a ponta e o relatório lista MACs/IPs da sua rede.
 
 ### Integração com o Wireshark
 
@@ -133,7 +151,7 @@ Testes: `python3 -m unittest discover -s tests -v`
 
 ## Ideias para evoluir
 
-Notificação por Telegram/e-mail, painel web (Flask), detecção de DNS suspeito, exportação para JSON/CSV, dispositivos "offline há muito tempo".
+Notificação por e-mail, ações no painel web, detecção de DNS suspeito, exportação para JSON/CSV, dispositivos "offline há muito tempo".
 
 ## Licença
 

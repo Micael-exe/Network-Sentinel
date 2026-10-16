@@ -7,3 +7,7 @@ reports/
 *.db
 *.pcap
 *.pcapng
+
+# Segredos (token do Telegram)
+.env
+*.env
