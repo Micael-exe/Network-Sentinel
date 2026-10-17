@@ -205,6 +205,8 @@ def cmd_history(db, args):
 
 
 def cmd_capture(db, args):
+    if args.notify:
+        _require_telegram()
     if not args.pcap and os.geteuid() != 0:
         raise ScanError("A captura ao vivo precisa de root: sudo python3 -m netsentinel capture ...")
     iface, gw = args.iface, None
@@ -223,6 +225,8 @@ def cmd_capture(db, args):
     print_alerts(res["alerts"] or [])
     if not res["alerts"]:
         print("[+] Nenhuma anomalia no tráfego capturado.")
+    elif args.notify:
+        _notify(res["alerts"], args.notify_level)
 
 
 def cmd_telegram(_db, args):
@@ -337,7 +341,11 @@ def build_parser():
     c = sub.add_parser("capture", help="analisa tráfego com tshark (Wireshark)")
     c.add_argument("--iface"); c.add_argument("--duration", type=int, default=30)
     c.add_argument("--pcap", help="analisar arquivo .pcap salvo no Wireshark")
-    c.add_argument("--max-mb", type=float, default=100.0); c.set_defaults(fn=cmd_capture)
+    c.add_argument("--max-mb", type=float, default=100.0)
+    c.add_argument("--notify", action="store_true", help="envia alertas do tráfego pelo Telegram")
+    c.add_argument("--notify-level", choices=["critical", "high", "medium", "low"],
+                   default="high", help="severidade mínima a notificar (padrão: high)")
+    c.set_defaults(fn=cmd_capture)
     r = sub.add_parser("report", help="gera relatório"); r.add_argument("--format", choices=["html", "md"], default="html")
     r.add_argument("-o", "--output")
     r.add_argument("--send", action="store_true", help="envia o relatório pelo Telegram")

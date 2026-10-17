@@ -103,6 +103,7 @@ python3 -m netsentinel telegram test       # mensagem de teste
 
 sudo python3 -m netsentinel scan --notify                      # avisa alertas ALTO e CRÍTICO
 sudo python3 -m netsentinel watch --ports --serve --notify --report-every 24
+sudo python3 -m netsentinel capture --iface eth0 --duration 30 --notify   # ARP spoofing, tráfego suspeito...
 python3 -m netsentinel report --send       # gera o HTML e envia como anexo
 ```
 
