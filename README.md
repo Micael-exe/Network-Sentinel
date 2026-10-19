@@ -78,8 +78,9 @@ devices   lista inventário
 alerts    lista alertas        (--all inclui os já vistos)
 ack       marca como visto     (ID ou --all)
 trust     confia/rotula        (MAC --label "nome" | --all | --untrust)
+forget    remove do inventário (MAC | --all-untrusted, pede confirmação; use -y para pular)
 history   histórico de um MAC
-capture   tráfego via tshark   (--iface, --duration, --pcap arquivo, --max-mb)
+capture   tráfego via tshark   (--iface, --duration, --pcap arquivo, --max-mb, --loop)
 report    gera relatório       (--format html|md, -o arquivo)
 serve     painel web ao vivo   (--port, --host, --refresh)
 telegram  setup | test         (notificações)
@@ -103,13 +104,14 @@ python3 -m netsentinel telegram test       # mensagem de teste
 
 sudo python3 -m netsentinel scan --notify                      # avisa alertas ALTO e CRÍTICO
 sudo python3 -m netsentinel watch --ports --serve --notify --report-every 24
-sudo python3 -m netsentinel capture --iface eth0 --duration 30 --notify   # ARP spoofing, tráfego suspeito...
+sudo python3 -m netsentinel capture --iface eth0 --duration 30 --notify          # uma janela
+sudo python3 -m netsentinel capture --iface eth0 --duration 60 --notify --loop   # vigia sem parar
 python3 -m netsentinel report --send       # gera o HTML e envia como anexo
 ```
 
 - `--notify-level critical|high|medium|low` define a severidade mínima (padrão: `high`).
 - Os alertas de uma varredura vão agrupados em **uma** mensagem, e a deduplicação de 6 h evita repetição.
-- O token fica em `.env` (permissão 600, ignorado pelo git). **Nunca** publique esse arquivo; se vazar, use `/revoke` no @BotFather.
+- O token fica em `~/.config/netsentinel/.env` (permissão 600), um local fixo que funciona em qualquer pasta e com ou sem `sudo`. **Nunca** publique esse arquivo; se vazar, use `/revoke` no @BotFather. (Versões anteriores salvavam um `.env` na pasta do projeto; se você tiver um, ele continua funcionando ali, mas o `telegram setup` já grava no novo local.)
 - Se o Telegram estiver fora do ar, o monitoramento continua e só registra o erro.
 - Atenção à privacidade: mensagens de bot não têm criptografia de ponta a ponta e o relatório lista MACs/IPs da sua rede.
 

@@ -8,10 +8,10 @@ import urllib.request
 import uuid
 from typing import List, Optional, Tuple
 
-from .db import SEVERITY_ORDER
+from .db import SEVERITY_ORDER, _chown_to_sudo_user, ensure_dir
 
 API_BASE = "https://api.telegram.org"
-ENV_FILE = ".env"
+ENV_FILE = ".env"                        # nome usado no modo antigo (pasta atual)
 MAX_ALERTS_PER_MESSAGE = 10
 EMOJI = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪"}
 LABEL = {"critical": "CRÍTICO", "high": "ALTO", "medium": "MÉDIO", "low": "BAIXO", "info": "INFO"}
@@ -22,6 +22,33 @@ class TelegramError(RuntimeError):
 
 
 # ------------------------------------------------------------- configuração
+def _real_home() -> str:
+    """Home do usuário real, mesmo quando o comando roda com sudo."""
+    user = os.environ.get("SUDO_USER")
+    if user:
+        try:
+            import pwd
+            return pwd.getpwnam(user).pw_dir
+        except (KeyError, ImportError):
+            pass
+    return os.path.expanduser("~")
+
+
+def default_config_path() -> str:
+    """Local fixo das credenciais: ~/.config/netsentinel/.env (funciona com ou sem sudo)."""
+    return os.path.join(_real_home(), ".config", "netsentinel", ".env")
+
+
+def find_config_path() -> str:
+    """Onde ler: variável de ambiente > .env da pasta atual (compatibilidade) > local fixo."""
+    env = os.environ.get("NETSENTINEL_ENV")
+    if env:
+        return env
+    if os.path.isfile(ENV_FILE):
+        return ENV_FILE
+    return default_config_path()
+
+
 def parse_env_file(path: str) -> dict:
     values = {}
     with open(path, encoding="utf-8") as f:
@@ -35,8 +62,13 @@ def parse_env_file(path: str) -> dict:
 
 
 def load_config(path: Optional[str] = None) -> Optional[Tuple[str, str]]:
-    """Lê (token, chat_id) das variáveis de ambiente ou do arquivo .env."""
-    path = path or os.environ.get("NETSENTINEL_ENV", ENV_FILE)
+    """Lê (token, chat_id) das variáveis de ambiente ou do .env.
+
+    Procura em: variáveis de ambiente > caminho explícito > NETSENTINEL_ENV >
+    .env da pasta atual (compatibilidade com versões antigas) > ~/.config/netsentinel/.env.
+    Assim o Telegram funciona de qualquer pasta, com ou sem sudo.
+    """
+    path = path or find_config_path()
     cfg = parse_env_file(path) if os.path.isfile(path) else {}
     token = os.environ.get("TELEGRAM_TOKEN") or cfg.get("TELEGRAM_TOKEN")
     chat = os.environ.get("TELEGRAM_CHAT_ID") or cfg.get("TELEGRAM_CHAT_ID")
@@ -44,8 +76,9 @@ def load_config(path: Optional[str] = None) -> Optional[Tuple[str, str]]:
 
 
 def save_config(token: str, chat_id: str, path: Optional[str] = None) -> str:
-    """Grava token/chat_id no .env com permissão 600 (só o dono lê)."""
-    path = path or os.environ.get("NETSENTINEL_ENV", ENV_FILE)
+    """Grava token/chat_id em local fixo (~/.config/netsentinel/.env) com permissão 600."""
+    path = path or os.environ.get("NETSENTINEL_ENV") or default_config_path()
+    ensure_dir(os.path.dirname(os.path.abspath(path)))
     values = parse_env_file(path) if os.path.isfile(path) else {}
     values.update({"TELEGRAM_TOKEN": token, "TELEGRAM_CHAT_ID": str(chat_id)})
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -54,6 +87,7 @@ def save_config(token: str, chat_id: str, path: Optional[str] = None) -> str:
         for k, v in values.items():
             f.write(f"{k}={v}\n")
     os.chmod(path, 0o600)
+    _chown_to_sudo_user(path)
     return path
 
 

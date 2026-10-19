@@ -122,6 +122,37 @@ class TestTelegram(unittest.TestCase):
         self.assertEqual(notify.load_config(path), ("1:abc", "55"))
         self.assertIsNone(notify.load_config(os.path.join(d, "nao_existe")))
 
+    def test_save_config_creates_missing_dirs(self):
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "nested", "dir", ".env")
+        saved = notify.save_config("1:abc", "55", path)
+        self.assertTrue(os.path.isfile(saved))
+        self.assertEqual(oct(os.stat(saved).st_mode & 0o777), "0o600")
+
+    def test_default_config_path_is_fixed_under_home(self):
+        home = notify._real_home()
+        self.assertTrue(notify.default_config_path().startswith(home))
+        self.assertTrue(notify.default_config_path().endswith(
+            os.path.join(".config", "netsentinel", ".env")))
+
+    def test_find_config_path_prefers_env_var(self):
+        os.environ["NETSENTINEL_ENV"] = "/tmp/explicito.env"
+        try:
+            self.assertEqual(notify.find_config_path(), "/tmp/explicito.env")
+        finally:
+            del os.environ["NETSENTINEL_ENV"]
+
+    def test_find_config_path_falls_back_to_fixed_location(self):
+        os.environ.pop("NETSENTINEL_ENV", None)
+        cwd = os.getcwd()
+        d = tempfile.mkdtemp()
+        os.chdir(d)
+        try:
+            self.assertFalse(os.path.isfile(".env"))
+            self.assertEqual(notify.find_config_path(), notify.default_config_path())
+        finally:
+            os.chdir(cwd)
+
 
 if __name__ == "__main__":
     unittest.main()

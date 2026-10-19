@@ -125,6 +125,17 @@ class Database:
         sets = ", ".join(f"{k}=?" for k in fields)
         self.x(f"UPDATE devices SET {sets} WHERE mac=?", (*fields.values(), mac))
 
+    def forget_device(self, mac) -> bool:
+        """Remove um dispositivo e todo o seu rastro (IPs, portas, presenças, alertas)."""
+        if not self.get_device(mac):
+            return False
+        self.x("DELETE FROM devices WHERE mac=?", (mac,))
+        self.x("DELETE FROM ip_history WHERE mac=?", (mac,))
+        self.x("DELETE FROM ports WHERE mac=?", (mac,))
+        self.x("DELETE FROM sightings WHERE mac=?", (mac,))
+        self.x("DELETE FROM alerts WHERE mac=?", (mac,))
+        return True
+
     def gateway_mac(self):
         r = self.one("SELECT mac FROM devices WHERE is_gateway=1 "
                      "ORDER BY last_seen DESC LIMIT 1")

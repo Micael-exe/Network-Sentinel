@@ -57,6 +57,28 @@ class TestAnalyzer(Base):
         self.assertTrue(is_randomized("02:5b:9e:ab:cd:ef"))
         self.assertFalse(is_randomized("a4:2b:b0:11:22:33"))
 
+    def test_forget_device_removes_everything(self):
+        from netsentinel.models import Port
+        mac = "aa:aa:aa:aa:aa:01"
+        process_scan(self.db, [Host("10.0.0.2", mac, ports=[Port(80)])], "n", learn=True,
+                     ts="2026-01-01T10:00:00")
+        process_scan(self.db, [Host("10.0.0.3", mac, ports=[Port(80)])], "n",
+                     ts="2026-01-02T10:00:00")  # gera histórico de IP e um alerta IP_CHANGED
+        self.assertIsNotNone(self.db.get_device(mac))
+        self.assertTrue(self.db.ip_history(mac))
+        self.assertTrue(self.db.open_ports(mac))
+        self.assertTrue(self.db.list_alerts(only_open=False))
+
+        self.assertTrue(self.db.forget_device(mac))
+        self.assertIsNone(self.db.get_device(mac))
+        self.assertEqual(self.db.ip_history(mac), [])
+        self.assertEqual(self.db.open_ports(mac), [])
+        self.assertEqual(self.db.sighting_count(mac), 0)
+        self.assertEqual([a for a in self.db.list_alerts(only_open=False) if a["mac"] == mac], [])
+
+    def test_forget_unknown_mac_returns_false(self):
+        self.assertFalse(self.db.forget_device("ff:ff:ff:ff:ff:ff"))
+
 
 class TestParsingCaptureReport(Base):
     def test_parse_nmap(self):

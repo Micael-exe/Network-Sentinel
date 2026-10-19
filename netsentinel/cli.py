@@ -188,6 +188,39 @@ def cmd_trust(db, args):
           + (f" ('{args.label}')" if args.label else ""))
 
 
+def cmd_forget(db, args):
+    if args.all_untrusted:
+        targets = [d["mac"] for d in db.list_devices() if not d["trusted"]]
+        if not targets:
+            print("Nenhum dispositivo desconhecido para remover.")
+            return
+        if not args.yes:
+            print(f"Isso vai remover {len(targets)} dispositivo(s) desconhecido(s) e todo o "
+                  f"histórico deles (IPs, portas, alertas). Esta ação não pode ser desfeita.")
+            if input("Confirma? [s/N]: ").strip().lower() not in ("s", "sim", "y", "yes"):
+                print("Cancelado.")
+                return
+        for mac in targets:
+            db.forget_device(mac)
+        print(f"[+] {len(targets)} dispositivo(s) removido(s) do inventário.")
+        return
+    if not args.mac:
+        raise SystemExit("Informe um MAC ou use --all-untrusted.")
+    mac = normalize_mac(args.mac)
+    dev = db.get_device(mac)
+    if not dev:
+        raise SystemExit(f"MAC {mac} não está no inventário.")
+    if not args.yes:
+        who = dev["label"] or dev["hostname"] or dev["vendor"] or mac
+        print(f"Isso vai remover '{who}' ({mac}) e todo o histórico dele (IPs, portas, alertas).")
+        print("Se o aparelho continuar na rede, ele volta como NOVO na próxima varredura.")
+        if input("Confirma? [s/N]: ").strip().lower() not in ("s", "sim", "y", "yes"):
+            print("Cancelado.")
+            return
+    db.forget_device(mac)
+    print(f"[+] {mac} removido do inventário.")
+
+
 def cmd_history(db, args):
     mac = normalize_mac(args.mac)
     d = db.get_device(mac)
@@ -204,17 +237,7 @@ def cmd_history(db, args):
         print(f"  {p['port']}/{p['proto']} {p['service'] or ''} {p['version'] or ''}")
 
 
-def cmd_capture(db, args):
-    if args.notify:
-        _require_telegram()
-    if not args.pcap and os.geteuid() != 0:
-        raise ScanError("A captura ao vivo precisa de root: sudo python3 -m netsentinel capture ...")
-    iface, gw = args.iface, None
-    try:
-        info = scanner.local_info()
-        iface, gw = iface or info.iface, info.gateway
-    except ScanError:
-        pass
+def run_capture(db, args, iface, gw):
     src = args.pcap or f"{iface} por {args.duration}s"
     print(f"[*] Analisando tráfego: {src}")
     packets = capture.run_tshark(iface, args.duration, args.pcap)
@@ -227,6 +250,33 @@ def cmd_capture(db, args):
         print("[+] Nenhuma anomalia no tráfego capturado.")
     elif args.notify:
         _notify(res["alerts"], args.notify_level)
+    return res
+
+
+def cmd_capture(db, args):
+    if args.notify:
+        _require_telegram()
+    if not args.pcap and os.geteuid() != 0:
+        raise ScanError("A captura ao vivo precisa de root: sudo python3 -m netsentinel capture ...")
+    iface, gw = args.iface, None
+    try:
+        info = scanner.local_info()
+        iface, gw = iface or info.iface, info.gateway
+    except ScanError:
+        pass
+    if not args.loop:
+        run_capture(db, args, iface, gw)
+        return
+    print(f"[*] Vigiando {iface} em janelas de {args.duration}s, sem parar. Ctrl+C para sair.")
+    try:
+        while True:
+            print(f"\n=== {now()} ===")
+            try:
+                run_capture(db, args, iface, gw)
+            except (ScanError, OSError) as exc:
+                print(f"[!] {exc}")
+    except KeyboardInterrupt:
+        print("\n[*] Encerrado.")
 
 
 def cmd_telegram(_db, args):
@@ -236,6 +286,11 @@ def cmd_telegram(_db, args):
         print("[+] Mensagem de teste enviada. Confira o seu Telegram.")
         return
     print("== Configuração do Telegram ==")
+    if os.path.isfile(".env") and not os.environ.get("NETSENTINEL_ENV"):
+        print(f"[!] Encontrei um .env antigo em {os.path.abspath('.env')} (versão anterior).")
+        print("    Ele continua valendo enquanto você rodar os comandos nesta pasta.")
+        print("    A partir de agora, as novas credenciais vão para um local fixo,")
+        print("    que funciona em qualquer pasta e com ou sem sudo.\n")
     print("1) No Telegram, converse com @BotFather, envie /newbot e copie o TOKEN.\n")
     token = getpass.getpass("Cole o token (não aparece ao digitar): ").strip()
     if not token:
@@ -258,8 +313,8 @@ def cmd_telegram(_db, args):
         if not chat_id:
             raise ValueError("chat_id vazio.")
     path = notify.save_config(token, chat_id)
-    _chown_to_sudo_user(path)
-    print(f"[+] Credenciais salvas em {path} (permissão 600, já ignorado pelo git).")
+    print(f"[+] Credenciais salvas em {path} (permissão 600).")
+    print("    Esse local funciona de qualquer pasta e com ou sem sudo.")
     notify.Telegram(token, chat_id).send_message(
         "✅ <b>Network Sentinel</b> configurado! Você receberá os alertas aqui.")
     print("[+] Mensagem de teste enviada. Confira o seu Telegram.")
@@ -336,6 +391,12 @@ def build_parser():
     t = sub.add_parser("trust", help="marca dispositivo como confiável / define rótulo")
     t.add_argument("mac", nargs="?"); t.add_argument("--label"); t.add_argument("--all", action="store_true")
     t.add_argument("--untrust", action="store_true"); t.set_defaults(fn=cmd_trust)
+    f = sub.add_parser("forget", help="remove um dispositivo do inventário (apaga o histórico dele)")
+    f.add_argument("mac", nargs="?")
+    f.add_argument("--all-untrusted", action="store_true",
+                   help="remove todos os dispositivos marcados como desconhecidos")
+    f.add_argument("-y", "--yes", action="store_true", help="não pedir confirmação")
+    f.set_defaults(fn=cmd_forget)
     h = sub.add_parser("history", help="histórico de um dispositivo"); h.add_argument("mac")
     h.set_defaults(fn=cmd_history)
     c = sub.add_parser("capture", help="analisa tráfego com tshark (Wireshark)")
@@ -345,6 +406,8 @@ def build_parser():
     c.add_argument("--notify", action="store_true", help="envia alertas do tráfego pelo Telegram")
     c.add_argument("--notify-level", choices=["critical", "high", "medium", "low"],
                    default="high", help="severidade mínima a notificar (padrão: high)")
+    c.add_argument("--loop", action="store_true",
+                   help="fica vigiando sem parar, repetindo a captura em janelas de --duration")
     c.set_defaults(fn=cmd_capture)
     r = sub.add_parser("report", help="gera relatório"); r.add_argument("--format", choices=["html", "md"], default="html")
     r.add_argument("-o", "--output")
