@@ -37,7 +37,12 @@ CREATE TABLE IF NOT EXISTS alerts (
     kind TEXT NOT NULL, mac TEXT, ip TEXT, message TEXT NOT NULL,
     ack INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS allowlist (
+    mac TEXT NOT NULL, kind TEXT NOT NULL, reason TEXT, created TEXT NOT NULL,
+    PRIMARY KEY (mac, kind)
+);
 """
+ALLOW_ALL = "*"  # kind especial: silencia TODOS os tipos de alerta para o MAC
 
 DEVICE_FIELDS = {"ip", "hostname", "vendor", "label", "trusted", "is_gateway",
                  "ports_scanned", "last_seen"}
@@ -214,6 +219,28 @@ class Database:
         rows = self.q(sql)
         rows.sort(key=lambda r: (SEVERITY_ORDER.get(r["severity"], 9), -r["id"]))
         return rows[:limit] if limit else rows
+
+    # -- lista de exceções (allowlist) -----------------------------------
+    def allow(self, mac, kind=ALLOW_ALL, reason=None, ts=None):
+        """Silencia um tipo de alerta (ou todos, com kind='*') para um MAC."""
+        self.x("INSERT INTO allowlist(mac, kind, reason, created) VALUES(?,?,?,?) "
+               "ON CONFLICT(mac, kind) DO UPDATE SET reason=excluded.reason, "
+               "created=excluded.created", (mac, kind, reason, ts or now()))
+
+    def disallow(self, mac, kind=None) -> int:
+        """Remove uma exceção. kind=None remove TODAS as exceções desse MAC."""
+        if kind is None:
+            return self.x("DELETE FROM allowlist WHERE mac=?", (mac,)).rowcount
+        return self.x("DELETE FROM allowlist WHERE mac=? AND kind=?", (mac, kind)).rowcount
+
+    def is_allowed(self, mac, kind) -> bool:
+        if not mac:
+            return False
+        return self.one("SELECT 1 FROM allowlist WHERE mac=? AND kind IN (?, ?)",
+                        (mac, kind, ALLOW_ALL)) is not None
+
+    def list_allowlist(self):
+        return self.q("SELECT * FROM allowlist ORDER BY created DESC")
 
     def ack(self, alert_id=None):
         if alert_id is None:

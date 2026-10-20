@@ -34,6 +34,24 @@ Ferramenta em **Python** para monitorar a sua **rede doméstica**: descobre disp
 
 Alertas repetidos são deduplicados por 6 h. MACs randomizados (Wi-Fi privado de iPhone/Android) são sinalizados como tal para reduzir falsos positivos.
 
+### Reduzindo falsos positivos (allowlist)
+
+Um aparelho seu que sempre terá uma porta "de risco" aberta (um NAS com Samba, por exemplo) não precisa continuar gerando alerta. Silencie por MAC, por tipo específico ou por tudo:
+
+```bash
+# silencia só RISKY_PORT desse MAC (outros tipos de alerta continuam valendo)
+python3 -m netsentinel allow AA:BB:CC:DD:EE:FF --kind RISKY_PORT --reason "NAS da sala, Samba com senha"
+
+# silencia TODOS os alertas desse MAC
+python3 -m netsentinel allow AA:BB:CC:DD:EE:FF
+
+python3 -m netsentinel allow --list                              # vê as exceções cadastradas
+python3 -m netsentinel disallow AA:BB:CC:DD:EE:FF --kind RISKY_PORT   # remove uma exceção
+python3 -m netsentinel disallow AA:BB:CC:DD:EE:FF                     # remove todas as desse MAC
+```
+
+A allowlist não desativa a *detecção* em si: o evento continua sendo registrado no histórico, só não vira alerta nem notificação para aquele MAC. Os demais dispositivos continuam sendo monitorados normalmente. Tipos de alerta: `NEW_DEVICE`, `IP_CHANGED`, `HOSTNAME_CHANGED`, `DEVICE_RETURNED`, `GATEWAY_CHANGED`, `MAC_MULTI_IP`, `NEW_PORT`, `RISKY_PORT`, `ARP_SPOOFING`, `ARP_FLOOD`, `UNKNOWN_TRAFFIC`, `TRAFFIC_SPIKE`. Use com cuidado em `GATEWAY_CHANGED` e `ARP_SPOOFING`, que normalmente indicam algo sério.
+
 ## Instalação (Kali Linux)
 
 ```bash
@@ -79,6 +97,8 @@ alerts    lista alertas        (--all inclui os já vistos)
 ack       marca como visto     (ID ou --all)
 trust     confia/rotula        (MAC --label "nome" | --all | --untrust)
 forget    remove do inventário (MAC | --all-untrusted, pede confirmação; use -y para pular)
+allow     silencia um tipo de alerta (ou todos) para um MAC  (--kind, --reason, --list)
+disallow  remove uma exceção da allowlist                    (MAC [--kind])
 history   histórico de um MAC
 capture   tráfego via tshark   (--iface, --duration, --pcap arquivo, --max-mb, --loop)
 report    gera relatório       (--format html|md, -o arquivo)

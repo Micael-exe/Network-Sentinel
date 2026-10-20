@@ -37,6 +37,8 @@ def process_scan(db: Database, hosts: List[Host], subnet: str,
     created: List[dict] = []
 
     def alert(sev, kind, mac, ip, msg):
+        if db.is_allowed(mac, kind):
+            return
         a = db.add_alert(ts, sev, kind, mac, ip, msg)
         if a:
             created.append(a)

@@ -79,6 +79,46 @@ class TestAnalyzer(Base):
     def test_forget_unknown_mac_returns_false(self):
         self.assertFalse(self.db.forget_device("ff:ff:ff:ff:ff:ff"))
 
+    def test_allowlist_silences_specific_kind_only(self):
+        from netsentinel.models import Port
+        mac = "aa:aa:aa:aa:aa:01"
+        process_scan(self.db, [Host("10.0.0.2", mac, ports=[Port(80)])], "n", learn=True,
+                     ts="2026-01-01T10:00:00")
+        self.db.allow(mac, "RISKY_PORT", reason="NAS confiável")
+        r = process_scan(self.db, [Host("10.0.0.2", mac,
+                         ports=[Port(80), Port(23, service="telnet"), Port(9999)])], "n",
+                         ts="2026-01-02T10:00:00")
+        kinds = self.kinds(r["alerts"])
+        self.assertNotIn("RISKY_PORT", kinds)   # silenciado
+        self.assertIn("NEW_PORT", kinds)        # a porta 9999 continua alertando
+
+    def test_allowlist_wildcard_silences_everything_for_mac(self):
+        mac = "aa:aa:aa:aa:aa:01"
+        process_scan(self.db, [Host("10.0.0.2", mac)], "n", learn=True, ts="2026-01-01T10:00:00")
+        self.db.allow(mac)  # kind padrão = '*'
+        r = process_scan(self.db, [Host("10.0.0.9", mac)], "n", ts="2026-01-02T10:00:00")
+        self.assertEqual(r["alerts"], [])
+
+    def test_disallow_restores_alerts(self):
+        mac = "aa:aa:aa:aa:aa:01"
+        process_scan(self.db, [Host("10.0.0.2", mac)], "n", learn=True, ts="2026-01-01T10:00:00")
+        self.db.allow(mac, "IP_CHANGED")
+        self.db.disallow(mac, "IP_CHANGED")
+        r = process_scan(self.db, [Host("10.0.0.9", mac)], "n", ts="2026-01-02T10:00:00")
+        self.assertIn("IP_CHANGED", self.kinds(r["alerts"]))
+
+    def test_other_devices_still_alert(self):
+        """A allowlist de um MAC não deve afetar os demais dispositivos."""
+        mac_a, mac_b = "aa:aa:aa:aa:aa:01", "bb:bb:bb:bb:bb:02"
+        process_scan(self.db, [Host("10.0.0.2", mac_a), Host("10.0.0.3", mac_b)], "n",
+                     learn=True, ts="2026-01-01T10:00:00")
+        self.db.allow(mac_a)
+        r = process_scan(self.db, [Host("10.0.0.9", mac_a), Host("10.0.0.8", mac_b)], "n",
+                         ts="2026-01-02T10:00:00")
+        alerted_macs = {a["mac"] for a in r["alerts"]}
+        self.assertNotIn(mac_a, alerted_macs)
+        self.assertIn(mac_b, alerted_macs)
+
 
 class TestParsingCaptureReport(Base):
     def test_parse_nmap(self):
@@ -93,6 +133,13 @@ class TestParsingCaptureReport(Base):
         kinds = {(a["kind"], a["severity"]) for a in r["alerts"]}
         self.assertIn(("ARP_SPOOFING", "critical"), kinds)
         self.assertIn(("UNKNOWN_TRAFFIC", "high"), kinds)
+
+    def test_allowlist_silences_unknown_traffic_in_capture(self):
+        self.db.allow("aa:aa:aa:aa:aa:01", "UNKNOWN_TRAFFIC")
+        pk = [{"eth_src": "aa:aa:aa:aa:aa:01", "length": 60, "arp_ip": "10.0.0.1",
+              "arp_mac": "aa:aa:aa:aa:aa:01", "arp_op": "2"}]
+        r = analyze_packets(self.db, pk, gateway_ip="10.0.0.9")  # sem spoofing aqui
+        self.assertEqual(r["alerts"], [])
 
     def test_demo_and_reports(self):
         alerts = build_demo(self.db)

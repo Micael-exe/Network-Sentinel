@@ -72,6 +72,8 @@ def analyze_packets(db: Database, packets: List[Dict], gateway_ip: Optional[str]
     created = []
 
     def alert(sev, kind, mac, ip, msg):
+        if db.is_allowed(mac, kind):
+            return
         a = db.add_alert(ts, sev, kind, mac, ip, msg)
         if a:
             created.append(a)

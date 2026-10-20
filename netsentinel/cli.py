@@ -221,6 +221,44 @@ def cmd_forget(db, args):
     print(f"[+] {mac} removido do inventário.")
 
 
+KNOWN_KINDS = ["NEW_DEVICE", "IP_CHANGED", "HOSTNAME_CHANGED", "DEVICE_RETURNED",
+              "GATEWAY_CHANGED", "MAC_MULTI_IP", "NEW_PORT", "RISKY_PORT",
+              "ARP_SPOOFING", "ARP_FLOOD", "UNKNOWN_TRAFFIC", "TRAFFIC_SPIKE"]
+
+
+def cmd_allow(db, args):
+    if args.list:
+        rows = db.list_allowlist()
+        if not rows:
+            print("Nenhuma exceção cadastrada.")
+            return
+        table([(r["mac"], r["kind"], r["reason"] or "-", r["created"]) for r in rows],
+              ["MAC", "Tipo", "Motivo", "Desde"])
+        return
+    if not args.mac:
+        raise SystemExit("Informe um MAC (ou use --list).")
+    mac = normalize_mac(args.mac)
+    if not db.get_device(mac):
+        print(f"[!] Aviso: {mac} ainda não está no inventário (a exceção vale mesmo assim).")
+    kind = (args.kind or "*").upper()
+    if kind != "*" and kind not in KNOWN_KINDS:
+        print(f"[!] Aviso: '{kind}' não é um tipo de alerta conhecido. "
+              f"Tipos existentes: {', '.join(KNOWN_KINDS)}")
+    db.allow(mac, kind, args.reason)
+    alvo = "TODOS os alertas" if kind == "*" else f"alertas do tipo {kind}"
+    print(f"[+] {alvo} de {mac} serão silenciados a partir de agora.")
+
+
+def cmd_disallow(db, args):
+    kind = args.kind.upper() if args.kind else None
+    n = db.disallow(normalize_mac(args.mac), kind)
+    if n:
+        alvo = f"o tipo {kind}" if kind else "todas as exceções"
+        print(f"[+] Removida(s) {n} exceção(ões) ({alvo}) de {args.mac}.")
+    else:
+        print("Nenhuma exceção encontrada para remover.")
+
+
 def cmd_history(db, args):
     mac = normalize_mac(args.mac)
     d = db.get_device(mac)
@@ -397,6 +435,17 @@ def build_parser():
                    help="remove todos os dispositivos marcados como desconhecidos")
     f.add_argument("-y", "--yes", action="store_true", help="não pedir confirmação")
     f.set_defaults(fn=cmd_forget)
+    al = sub.add_parser("allow", help="silencia um tipo de alerta (ou todos) para um MAC")
+    al.add_argument("mac", nargs="?")
+    al.add_argument("--kind", help=f"tipo a silenciar, ex.: RISKY_PORT (padrão: todos). "
+                    f"Tipos: {', '.join(KNOWN_KINDS)}")
+    al.add_argument("--reason", help="motivo, só para sua referência")
+    al.add_argument("--list", action="store_true", help="lista as exceções cadastradas")
+    al.set_defaults(fn=cmd_allow)
+    da = sub.add_parser("disallow", help="remove uma exceção da allowlist")
+    da.add_argument("mac")
+    da.add_argument("--kind", help="tipo específico a remover (padrão: remove todas desse MAC)")
+    da.set_defaults(fn=cmd_disallow)
     h = sub.add_parser("history", help="histórico de um dispositivo"); h.add_argument("mac")
     h.set_defaults(fn=cmd_history)
     c = sub.add_parser("capture", help="analisa tráfego com tshark (Wireshark)")
